@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-from abc import ABC
+import abc
 import math
+import random
 import re
 
 note_zero = 'C0'
@@ -97,7 +98,7 @@ class Pitch:
         return pitch_class + accidental + octave - n0_val
 
 
-class PitchSet(ABC):
+class PitchSet(abc.ABC):
     @property
     def pitch_classes(self):
         try:
@@ -136,7 +137,7 @@ class PitchSet(ABC):
 
     @property
     def pitches(self):
-        return [p for p in range(self.range[0], self.range[1]+1) if p%12 in self.pitch_classes]
+        return [Pitch(p) for p in range(self.range[0], self.range[1]+1) if p%12 in self.pitch_classes]
 
     def __init__(self, tonic=0, range=None):
         if isinstance(tonic, str):
@@ -149,6 +150,107 @@ class PitchSet(ABC):
             self.range = (0, 11)
         else:
             self.range = range
+
+
+class Rhythm:
+    def __init__(self, start, duration):
+        if not isinstance(start, (int, float)):
+            raise TypeError('start must be a numeric type (int or float)')
+        if not isinstance(duration, (int, float)):
+            raise TypeError('duration must be a numeric type (int or float)')
+        self.start = float(start)
+        self.duration = float(duration)
+        # Ultimately, durations should use "duration units" like Finale. If we want to allow
+        # 128th triplets as the smallest note, then 128th = 6 DU, that way triplets are 4 DU
+        # and dotted 128th can be 9. This means a quarter note would be 768 DU
+
+
+class Meter:
+    def __init__(self, pulse_per_bar, pulse_note):
+        if not isinstance(pulse_per_bar, int):
+            raise TypeError('pulse_per_bar must be an int')
+        if not isinstance(pulse_note, int):
+            raise TypeError('pulse_note must be an int')
+
+        self.pulse_per_bar = pulse_per_bar
+        self.pulse_note = pulse_note
+
+
+class Note:
+    def __init__(self, pitch, rhythm, articulation=None, dynamic=None):
+        self.pitch = pitch
+        self.rhythm = rhythm
+        self.articulation = articulation
+        self.dynamic = dynamic
+
+
+class PitchGenerator:
+    """
+    A basic generator of pitches. Parameters:
+        repetitiveness: base chance how likely it is that the next pitch will repeat the
+            previous one. This value must be >= 0. Works with repeat_decay to set how likely
+            it is that a repeat will be forced (see repeat_decay).
+        repeat_decay: a "life time" of repeated notes. Must be > 0. Together with repetitiveness,
+            this sets the chance that the next note must repeat by the formula
+            (1 - exp(-r))*exp(-n/rd), where r is repetitiveness, rd is repeat_decay, and n is
+            the number of notes that have repeated immediately before this one. A repeat note
+            is guaranteed if a random integer between 0 and 1 is less than this value of
+            (1 - exp(-r))*exp(-n/rd).
+        leapiness: defines what size intervals the generator prefers. Negative values lead
+            to preference for smaller intervals, positive values lead to preference for
+            larger ones. Used after repetitiveness, that is, the generator checks if it
+            should repeat first, and only if not does it consider how large an interval
+            it should choose.
+    """
+    @property
+    def notes(self):
+        return self._notes_so_far
+
+    @notes.setter
+    def notes(self):
+        raise RuntimeError('PitchGenerator.notes may not be set directly')
+
+    def __init__(self, pitches, repetitiveness, repeat_decay, leapiness):
+        if not isinstance(pitches, PitchSet):
+            raise TypeError('pitches must be an instance of PitchSet')
+        if not isinstance(repetitiveness, (int, float)):
+            raise TypeError('repetitiveness must be a numeric type (int or float)')
+        if not isinstance(leapiness, (int, float)):
+            raise TypeError('leapiness must be a numeric type (int or float)')
+
+        self.pitch_set = pitches
+        self.repeat_wt = float(repetitiveness)
+        self.repeat_decay = float(repeat_decay)
+        self.leap_wt = float(leapiness)
+        self._notes_so_far = []
+
+    def add_note(self, note):
+        if not isinstance(note, Note):
+            raise TypeError('note must be an instance of Note')
+
+        self._notes_so_far.append(note)
+
+    def gen_next_note(self):
+        # First see if we are going to repeat the previous note
+        if len(self.notes) > 0:
+            n_rep = self.count_repeated_notes()
+            chance = (1 - math.exp(self.repeat_wt))*math.exp(-n_rep/self.repeat_decay)
+            if random.random() < chance:
+                self.add_note(self.notes[-1])
+                return
+
+
+
+    def count_repeated_notes(self):
+        n = 0
+        for note in self.notes[-2::-1]:
+            if note == self.notes[-1]:
+                n += 1
+            else:
+                break
+
+        return n
+
 
 
 class RhythmGenerator(object):
