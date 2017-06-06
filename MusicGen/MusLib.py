@@ -3,6 +3,7 @@ import abc
 import math
 import random
 import re
+import warnings
 
 note_zero = 'C0'
 precision = 1e-6
@@ -162,17 +163,195 @@ class PitchSet(abc.ABC):
         return self.pitches[item]
 
 
+class Duration:
+    """
+    Use this class to represent a duration (length in time).
+    Durations are represented internally in duration units,
+    an arbitrary unit chosen to be able to represent most
+    common durations as integers. The DU value of a quarter
+    note is given by Duration.qnote_dur; you may alter this
+    if you wish, but be warned, instances of Duration created
+    before the change will not update their instance durations.
+    """
+    # To be able to resolve 64th note triplets and dotted 64th notes, a 64th note
+    # must be represented by a number of duration units divisible by 2 and 3. Since
+    # 6 is the least common multiple of 2 and 3, that means 1 64th note = 6 DU, and
+    # therefore 1 quarter note = 16 * 6 = 96.
+    qnote_dur = 96
+    simple_names = {'octuple whole':8, 'quadruple whole':4, 'double whole':2, 'whole':1,
+                    'half':1/2, 'quarter':1/4, 'eighth':1/8, 'sixteenth':1/16, 'thirty second':1/32,
+                    'sixty fourth':1/64}
+    fancy_names = {'maxima':8, 'longa':4, 'breve':2, 'semibreve':1, 'minim':1/2, 'crotchet':1/4,
+                   'quaver':1/8, 'semiquaver':1/16, 'demisemiquaver':1/32, 'hemidemisemiquaver':1/64}
+
+    @property
+    def is_dotted(self):
+        return self._is_dotted
+
+    @is_dotted.setter
+    def is_dotted(self):
+        raise RuntimeError('Duration.is_dotted may not be set manually')
+
+    @property
+    def is_triplet(self):
+        return self._is_triplet
+
+    @is_triplet.setter
+    def is_triplet(self):
+        raise RuntimeError('Duration.is_triplet may not be set manually')
+
+    @property
+    def duration(self):
+        return self._duration
+
+    @duration.setter
+    def duration(self):
+        raise RuntimeError('Duration.duration may not be set manually, only through __init__()')
+
+    def __init__(self, duration):
+        """
+        Create an instance of Duration with a specified duration.
+        :param duration: the desired duration. Can be given as an integer, in which case it is
+        interpreted as duration units (DU, see class help), or a string. The string interpreter
+        is reasonably flexible, and can be either:
+            1) a fraction, i.e. '1/4', that represents the modern note representation. I.e., '1/4' is
+            a quarter note, '1/16' a sixteenth note, '1' a whole note, '2' a double whole note, etc.
+            Dotted or triple notes would have to be given as, e.g. '3/8' would be a dotted quarter,
+            and 1/12 would be an eighth note triplet.
+            2) as a name, e.g. 'eighth', 'eighth note', 'quaver', etc. This will recognize both the
+             regular English names and the older names ('quaver','crotchet', etc.). The name may end
+             in 'note' or not (i.e., 'half note' and 'half' are equivalent) and breaks in between words
+             may be omitted, or included as spaces, dashes, or underscores (i.e. 'thirty second',
+             'thirtysecond', 'thirty_second', and 'thirty-second' are all the same). Finally, the
+             keywords 'tuple' or 'triplet' anywhere in the string will make it a triplet of that note,
+             and 'dot' or 'dotted' will do the same for dotted notes.
+        :return:
+        """
+        if not isinstance(duration, (int,str)):
+            raise TypeError('duration must be an int or str')
+
+        self._is_dotted = False
+        self._is_triplet = False
+        if isinstance(duration, str):
+            self._duration = self._parse_duration_string(duration)
+        else:
+            self._duration = duration
+
+    def __repr__(self):
+        return '<{!s} ({!r} DU) at {:#x}>'.format(self.__class__, self.duration, id(self))
+
+    def _parse_duration_string(self, dur_str):
+        dur_str_in = dur_str
+        dur_str = dur_str.lower()
+        frac = None
+        if re.match('^\d+/?\d*$', dur_str):
+            try:
+                frac = [int(x) for x in dur_str.split('/') if len(x) > 0]
+            except ValueError:
+                raise ValueError('Could not parse duration string')
+            else:
+                if len(frac) == 1:
+                    frac = frac[0]
+                else:
+                    frac = frac[0]/frac[1]
+
+        else:
+            # First, is it dotted or a triplet?
+            m = re.search('dotted|dot', dur_str)
+            if m is not None:
+                self._is_dotted = True
+                dur_str = dur_str.replace(m.group(), '').strip()
+
+            m = re.search('triplet|tuple', dur_str)
+            if m is not None:
+                self._is_triplet = True
+                dur_str = dur_str.replace(m.group(), '').strip()
+
+            # Now, more complicatedly, we have to figure out which note it actually is. We'll
+            # use the names defined for the class
+            for k, v in Duration.simple_names.items():
+                regex = Duration._note_name_regex(k)
+                if re.match(regex, dur_str):
+                    frac = v
+                    break
+
+            for k, v in Duration.fancy_names.items():
+                regex = Duration._note_name_regex(k)
+                if re.match(regex, dur_str):
+                    frac = v
+                    break
+
+            # Calculate the duration as by taking the ratio of the requested duration
+            # to a quarter note times the quarter note duration
+            if self._is_triplet and frac is not None:
+                frac *= 2/3
+            if self._is_dotted and frac is not None:
+                frac *= 1.5
+
+        # Did parsing fail?
+        if frac is None:
+            raise RuntimeError('Could not parse duration string "{}"'.format(dur_str_in))
+
+        # Check that there's no partial duration units
+        dur = frac * 4 * Duration.qnote_dur
+        if dur % 1 != 0:
+            warnings.warn('Fractional duration unit detected; will be truncated with int()')
+
+        return int(dur)
+
+    @staticmethod
+    def _note_name_regex(note_name):
+        # The regex for note names allows any space to be a space, dash, underscore, or omitted
+        # and for "note" to be at the end or not
+        note_name = note_name.replace(' ','[ \-_]?')
+        return '^' + note_name + '([ \-_]note)?$'
+
+
+class StartTime:
+    """
+    For now, this will just keep track of the starting time of a rhythm in duration units
+    Eventually it can interact with meters to compute bars and beats
+    """
+    @property
+    def start_du(self):
+        return self._start_du
+
+    def __init__(self, start_du):
+        if not isinstance(start_du, int) or start_du < 0:
+            raise TypeError('start_du must be an int >= 0')
+
+        self._start_du = start_du
+
+
 class Rhythm:
+    @property
+    def duration(self):
+        """
+        Returns the length of the rhythm in DUs
+        :return: an integer
+        """
+        return self._duration_instance.duration
+
+    @property
+    def start(self):
+        """
+        Returns the start time of the rhythm in DUs from beginning of piece at 0
+        :return: an integer
+        """
+        return self._start_time_instance.start_du
+
     def __init__(self, start, duration):
-        if not isinstance(start, (int, float)):
-            raise TypeError('start must be a numeric type (int or float)')
-        if not isinstance(duration, (int, float)):
-            raise TypeError('duration must be a numeric type (int or float)')
-        self.start = float(start)
-        self.duration = float(duration)
-        # Ultimately, durations should use "duration units" like Finale. If we want to allow
-        # 128th triplets as the smallest note, then 128th = 6 DU, that way triplets are 4 DU
-        # and dotted 128th can be 9. This means a quarter note would be 768 DU
+        if not isinstance(start, StartTime):
+            raise TypeError('start must be an instance of StartTime')
+        if not isinstance(duration, Duration):
+            raise TypeError('duration must be an instance of MusLib.Duration')
+        self._start_time_instance = start
+        self._duration_instance = duration
+
+    def __repr__(self):
+        return '<{} start={}, dur={} at {:#x}>'.format(
+            self.__class__, self.start, self.duration, id(self)
+        )
 
 
 class Meter:
@@ -273,12 +452,94 @@ class RhythmGenerator(object):
     """
     Starting beat of a measure is considered beat 0
     """
-    def __init__(self):
-        pass
+    @property
+    def rhythms(self):
+        return self._rhythms_so_far
 
-    @staticmethod
-    def gen_phrase_rhythm(length, meter):
-        pass
+    @rhythms.setter
+    def rhythms(self):
+        raise RuntimeError('RhythmGenerator.rhythms may not be set directly')
+
+    @property
+    def start_time(self):
+        return self._start_time
+
+    def __init__(self, durations, repetitiveness, repeat_decay, start_time=0):
+        """
+        Similarly to PitchGenerator, this will generate a phrase's durations
+        :param durations: a list or tuple of allowed durations
+        :param repetitiveness: base chance how likely it is that the next rhythm will repeat the
+            previous one. This value must be >= 0. Works with repeat_decay to set how likely
+            it is that a repeat will be forced (see repeat_decay).
+        :param repeat_decay: a "life time" of repeated durations. Must be > 0. Together with
+            repetitiveness, this sets the chance that the next rhythm must repeat by the formula
+            (1 - exp(-r))*exp(-n/rd), where r is repetitiveness, rd is repeat_decay, and n is
+            the number of durations that have repeated immediately before this one. A repeat rhythm
+            is guaranteed if a random integer between 0 and 1 is less than this value of
+            (1 - exp(-r))*exp(-n/rd).
+        :return:
+        """
+        if not isinstance(durations, (tuple, list)):
+            raise TypeError('durations must be a list or tuple')
+        else:
+            if not all([isinstance(x, Duration) for x in durations]):
+                raise TypeError('durations must contain only instances of MusLib.Duration')
+
+        if not isinstance(repetitiveness, (int, float)):
+            raise TypeError('repetitiveness must be an int or float')
+        if not isinstance(repeat_decay, (int, float)):
+            raise TypeError('repeat_decay must be an int or float')
+        if not isinstance(start_time, (int, StartTime)):
+            raise TypeError('start_time must be an int or instance of StartTime')
+
+        self.duration_set = durations
+        self.repeat_wt = float(repetitiveness)
+        self.repeat_decay = float(repeat_decay)
+        self._rhythms_so_far = []
+        if isinstance(start_time, StartTime):
+            self._start_time = start_time
+        else:
+            self._start_time = StartTime(start_time)
+
+    def add_duration(self, dur):
+        if not isinstance(dur, (Duration, Rhythm)):
+            raise TypeError('dur must be an instance of MusLib.Duration or MusLib.Rhythm')
+        if isinstance(dur, Rhythm):
+            dur = Rhythm._duration_instance
+
+        new_rhythm = Rhythm(self.get_next_start_time(), dur)
+        self._rhythms_so_far.append(new_rhythm)
+
+    def gen_next_rhythm(self):
+
+        # First, as in PitchGenerator we see if we should repeat the previous rhythm
+        if len(self._rhythms_so_far) > 0:
+            n_rep = self.count_repeated_rhythms()
+            chance = (1 - math.exp(self.repeat_wt))*math.exp(-n_rep/self.repeat_decay)
+            if random.random() < chance:
+                self.add_duration(self._rhythms_so_far[-1])
+                return
+
+        i = random.randint(0, len(self.duration_set) - 1)
+        self.add_duration(self.duration_set[i])
+
+    def count_repeated_rhythms(self):
+        n = 0
+        for rhythm in self._rhythms_so_far[-2::-1]:
+            if rhythm.duration == self._rhythms_so_far[-1].duration:
+                n += 1
+            else:
+                break
+
+        return n
+
+    def get_next_start_time(self):
+        if len(self._rhythms_so_far) == 0:
+            return self._start_time
+        else:
+            new_stime = self._rhythms_so_far[-1].start + self._rhythms_so_far[-1].duration
+            return StartTime(new_stime)
+
 
     @staticmethod
     def calculate_syncopation(length, beat, meter, linear=False):
