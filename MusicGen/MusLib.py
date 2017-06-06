@@ -151,6 +151,16 @@ class PitchSet(abc.ABC):
         else:
             self.range = range
 
+    def __len__(self):
+        l = 0
+        for p in range(self.range[0], self.range[1]+1):
+            if p%12 in self.pitch_classes:
+                l += 1
+        return l
+
+    def __getitem__(self, item):
+        return self.pitches[item]
+
 
 class Rhythm:
     def __init__(self, start, duration):
@@ -203,14 +213,17 @@ class PitchGenerator:
             it should choose.
     """
     @property
-    def notes(self):
+    def pitches(self):
         return self._notes_so_far
 
-    @notes.setter
-    def notes(self):
+    @pitches.setter
+    def pitches(self):
         raise RuntimeError('PitchGenerator.notes may not be set directly')
 
     def __init__(self, pitches, repetitiveness, repeat_decay, leapiness):
+        if isinstance(pitches, abc.ABCMeta):
+            raise ValueError('pitches must be an instance of a class derived from PitchSet: did you call e.g. '
+                             'MusLib.MajorScale instead of MusLib.MajorScale() (without the parentheses?)')
         if not isinstance(pitches, PitchSet):
             raise TypeError('pitches must be an instance of PitchSet')
         if not isinstance(repetitiveness, (int, float)):
@@ -224,33 +237,36 @@ class PitchGenerator:
         self.leap_wt = float(leapiness)
         self._notes_so_far = []
 
-    def add_note(self, note):
-        if not isinstance(note, Note):
-            raise TypeError('note must be an instance of Note')
+    def add_pitch(self, note):
+        if not isinstance(note, Pitch):
+            raise TypeError('note must be an instance of Pitch')
 
         self._notes_so_far.append(note)
 
-    def gen_next_note(self):
+    def gen_next_pitch(self):
         # First see if we are going to repeat the previous note
-        if len(self.notes) > 0:
-            n_rep = self.count_repeated_notes()
+        if len(self.pitches) > 0:
+            n_rep = self.count_repeated_pitches()
             chance = (1 - math.exp(self.repeat_wt))*math.exp(-n_rep/self.repeat_decay)
             if random.random() < chance:
-                self.add_note(self.notes[-1])
+                self.add_pitch(self.pitches[-1])
                 return
 
+        self.add_pitch(self.pitch_set[random.randint(0, len(self.pitch_set) - 1)])
 
-
-    def count_repeated_notes(self):
+    def count_repeated_pitches(self):
         n = 0
-        for note in self.notes[-2::-1]:
-            if note == self.notes[-1]:
+        for pitch in self.pitches[-2::-1]:
+            if pitch == self.pitches[-1]:
                 n += 1
             else:
                 break
 
         return n
 
+    def iter_pitch_names(self):
+        for p in self.pitches:
+            yield p.as_name()
 
 
 class RhythmGenerator(object):
@@ -328,7 +344,6 @@ class MinorScale(PitchSet):
 
 class Ionian(PitchSet):
     _pitch_classes = (0, 2, 4, 5, 7, 9, 11)
-
 
 class Aeolian(PitchSet):
     _pitch_classes = (0, 2, 3, 5, 7, 8, 10)
