@@ -7,7 +7,7 @@ import warnings
 
 note_zero = 'C0'
 precision = 1e-6
-
+max_allowed_duration = 2**32-1
 
 class Pitch:
     note_re = '^[a-gA-G][#b]?\d{0,2}$'
@@ -233,9 +233,12 @@ class Duration:
         self._is_dotted = False
         self._is_triplet = False
         if isinstance(duration, str):
-            self._duration = self._parse_duration_string(duration)
-        else:
-            self._duration = duration
+            duration = self._parse_duration_string(duration)
+
+        if duration > max_allowed_duration:
+            raise ValueError('Duration requested exceeds max allowed ({})'.format(max_allowed_duration))
+
+        self._duration = duration
 
     def __repr__(self):
         return '<{!s} ({!r} DU) at {:#x}>'.format(self.__class__, self.duration, id(self))
@@ -479,6 +482,10 @@ class RhythmGenerator(object):
             (1 - exp(-r))*exp(-n/rd).
         :return:
         """
+
+        #TODO: add ability to restrict note length by remaining duration of phrase
+        #TODO: add weighting for syncopation (to prefer or not notes that will avoid crossing a beat)
+
         if not isinstance(durations, (tuple, list)):
             raise TypeError('durations must be a list or tuple')
         else:
@@ -510,18 +517,26 @@ class RhythmGenerator(object):
         new_rhythm = Rhythm(self.get_next_start_time(), dur)
         self._rhythms_so_far.append(new_rhythm)
 
-    def gen_next_rhythm(self):
+    def gen_next_rhythm(self, max_length=max_allowed_duration):
+        """
 
-        # First, as in PitchGenerator we see if we should repeat the previous rhythm
-        if len(self._rhythms_so_far) > 0:
+        :param max_length: maxmimum length in DUs (useful to avoid having a rhythm exceed a phrase length)
+        :return:
+        """
+        # First, as in PitchGenerator we see if we should repeat the previous rhythm,
+        # but we need to check if doing so would exceed the max requested length
+        if len(self._rhythms_so_far) > 0 and self._rhythms_so_far[-1].duration <= max_length:
             n_rep = self.count_repeated_rhythms()
             chance = (1 - math.exp(self.repeat_wt))*math.exp(-n_rep/self.repeat_decay)
             if random.random() < chance:
                 self.add_duration(self._rhythms_so_far[-1])
                 return
 
-        i = random.randint(0, len(self.duration_set) - 1)
-        self.add_duration(self.duration_set[i])
+        # Construct a list of durations that are less than or equal to the requested max length
+        this_dur_set = [dur for dur in self.duration_set if dur.duration <= max_length]
+
+        i = random.randint(0, len(this_dur_set) - 1)
+        self.add_duration(this_dur_set[i])
 
     def count_repeated_rhythms(self):
         n = 0
