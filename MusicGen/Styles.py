@@ -28,9 +28,9 @@ class BaseStyle(abc.ABC):
 
         if isinstance(dur_sets, list):
             if not all([isinstance(x, DurationSet) for x in dur_sets]):
-                raise TypeError('pitch_sets must be an instance of MusLib.PitchSet or a list of PitchSet instances')
+                raise TypeError('dur_sets must be an instance of MusLib.DurationSet or a list of DurationSet instances')
         elif not isinstance(dur_sets, DurationSet):
-            raise TypeError('pitch_sets must be an instance of MusLib.PitchSet or a list of PitchSet instances')
+            raise TypeError('dur_sets must be an instance of MusLib.DurationSet or a list of DurationSet instances')
 
         if not isinstance(dur_sets, list):
             dur_sets = [dur_sets]
@@ -41,8 +41,8 @@ class BaseStyle(abc.ABC):
 
     def _gen_layers(self, density=1.0, same_pitch_set=True, phrase_len=3072):
         self.current_layers = []
-        common_pitch_gen = PitchGenerator(choose_from_list(self.pitch_sets),1.0,1.0,1.0)
-        common_dur_gen = RhythmGenerator(choose_from_list(self.dur_sets),1.0,1.0)
+        common_pitch_gen = PitchGenerator(choose_from_list(self.pitch_sets), 1.0, 1.0, 1.0)
+        common_dur_gen = RhythmGenerator(choose_from_list(self.dur_sets), 1.0, 1.0)
         for i in range(self.max_layers):
             # Once we have our minimum number of layers, allow the possibility that
             # some layers will not be activated. The chance decreases as more layers are

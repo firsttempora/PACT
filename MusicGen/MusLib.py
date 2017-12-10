@@ -9,6 +9,7 @@ note_zero = 'C0'
 precision = 1e-6
 max_allowed_duration = 2**32-1
 
+
 class Pitch:
     note_re = '^[a-gA-G][#b]?\d{0,2}$'
     note_semitones = {'C':0, 'D':2, 'E':4, 'F':5, 'G':7, 'A':9, 'B':11}
@@ -100,111 +101,6 @@ class Pitch:
             n0_val = Pitch.note_name_to_midi(note_zero)
 
         return pitch_class + accidental + octave - n0_val
-
-
-class DurationSet:
-    @property
-    def duration_set(self):
-        return self._duration_set
-
-    def __init__(self, *durations):
-        """
-        Currently a very basic container for a set of durations. Can expand later as needed,
-        can either create instances of this directly or inherited classes
-        :param durations: all durations that you wish to include
-        :return: nothing
-        """
-        duration_set = []
-        for dur in durations:
-            if isinstance(dur, Duration):
-                if dur not in duration_set:
-                    duration_set.append(dur)
-            else:
-                raise TypeError('All arguments passed to DurationSet.__init__() must be instances of Duration')
-
-        self._duration_set = duration_set
-
-    def __iter__(self):
-        self._iter_ind = 0
-        return self
-
-    def __next__(self):
-        if self._iter_ind < len(self.duration_set):
-            dur = self.duration_set[self._iter_ind]
-            self._iter_ind += 1
-            return dur
-        else:
-            raise StopIteration()
-
-    def add_duration(self, dur):
-        if not isinstance(dur, Duration):
-            raise TypeError('dur must be an instance of Duration')
-        elif dur not in self.duration_set:
-            self._duration_set.append(dur)
-
-
-class PitchSet(abc.ABC):
-    @property
-    def pitch_classes(self):
-        try:
-            return [(x + self.tonic)%12 for x in self._pitch_classes]
-        except AttributeError as err:
-            raise TypeError('{0} '
-                            'Did you try to instantiate the abstract class PitchSet directly, '
-                            'or forget to set _pitch_classes in an inherited class?'.format(err.args[0]))
-
-    @pitch_classes.setter
-    def pitch_classes(self, value):
-        raise RuntimeError('"pitches" cannot be set')
-
-    @property
-    def range(self):
-        return self._range
-
-    @range.setter
-    def range(self, value):
-        if not isinstance(value, (list, tuple)) or len(value) != 2:
-            raise TypeError('PitchSet.range value must be a list or tuple of length 2')
-
-        myrange = []
-        for v in value:
-            if isinstance(v, int):
-                myrange.append(v)
-            elif isinstance(v, str):
-                myrange.append(Pitch.note_name_to_midi(v))
-            else:
-                raise TypeError('The value for PitchSet.range must be a list or tuple of integers or valid note names as strings')
-
-        if myrange[1] >= myrange[0]:
-            self._range = tuple(myrange)
-        else:
-            self._range = tuple(myrange[::-1])
-
-    @property
-    def pitches(self):
-        return [Pitch(p) for p in range(self.range[0], self.range[1]+1) if p%12 in self.pitch_classes]
-
-    def __init__(self, tonic=0, range=None):
-        if isinstance(tonic, str):
-            tonic = Pitch.note_name_to_midi(tonic)
-        elif not isinstance(tonic, int):
-            raise TypeError('tonic must be an instance of str or int')
-
-        self.tonic = tonic % 12
-        if range is None:
-            self.range = (0, 11)
-        else:
-            self.range = range
-
-    def __len__(self):
-        l = 0
-        for p in range(self.range[0], self.range[1]+1):
-            if p%12 in self.pitch_classes:
-                l += 1
-        return l
-
-    def __getitem__(self, item):
-        return self.pitches[item]
 
 
 class Duration:
@@ -358,6 +254,149 @@ class Duration:
         # and for "note" to be at the end or not
         note_name = note_name.replace(' ','[ \-_]?')
         return '^' + note_name + '([ \-_]note)?$'
+
+
+class DurationSet:
+    @property
+    def duration_set(self):
+        return self._duration_set
+
+    def __init__(self, *durations):
+        """
+        Currently a very basic container for a set of durations. Can expand later as needed,
+        can either create instances of this directly or inherited classes
+        :param durations: all durations that you wish to include
+        :return: nothing
+        """
+        duration_set = []
+        for dur in durations:
+            if isinstance(dur, Duration):
+                if dur not in duration_set:
+                    duration_set.append(dur)
+            else:
+                raise TypeError('All arguments passed to DurationSet.__init__() must be instances of Duration')
+
+        self._duration_set = duration_set
+
+    def __iter__(self):
+        self._iter_ind = 0
+        return self
+
+    def __next__(self):
+        if self._iter_ind < len(self.duration_set):
+            dur = self.duration_set[self._iter_ind]
+            self._iter_ind += 1
+            return dur
+        else:
+            raise StopIteration()
+
+    def add_duration(self, dur):
+        if not isinstance(dur, Duration):
+            raise TypeError('dur must be an instance of Duration')
+        elif dur not in self.duration_set:
+            self._duration_set.append(dur)
+
+    @staticmethod
+    def duple_set(min_length=Duration('1/64'), max_length=Duration('2'), incl_dotted=True):
+        """
+        Construct a duration set with all duple durations between the minimum and maximum lengths
+        Duple durations are defined as those with durations that are a quarter note time some power
+        of 2.
+        :param min_length: the shortest duration allowed. If a duple duration, will be included. Default is 64th note.
+           Must be an instance of Duration.
+        :param max_length: the longest duration allowed. If a duple duration, will be included. Default is double whole
+           note. Must be an instance of Duration.
+        :param incl_dotted: boolean, if True (default) dotted notes within the duration range will be included.
+        :return: an instance of DurationSet
+        """
+        # Input checking
+        if not isinstance(min_length, Duration):
+            raise TypeError('min_length must be an instance of MusLib.Duration')
+        elif not isinstance(max_length, Duration):
+            raise TypeError('max_length must be an instance of MusLib.Duration')
+        elif not isinstance(incl_dotted, bool):
+            raise TypeError('incl_dotted must be a boolean')
+
+        # Find the smallest duple value
+        dur_len = Duration.qnote_dur
+        while dur_len >= min_length.duration:
+            dur_len //= 2
+
+        # The last division will put us below the minimum value, so bring it back up one
+        dur_len *= 2
+
+        dur_list = []
+        while dur_len <= max_length.duration:
+            dur_list.append(Duration(dur_len))
+            if incl_dotted and dur_len*1.5 <= max_length.duration:
+                dur_list.append(Duration(int(dur_len*1.5)))
+            dur_len *= 2
+
+        return DurationSet(*dur_list)
+
+
+class PitchSet(abc.ABC):
+    @property
+    def pitch_classes(self):
+        try:
+            return [(x + self.tonic)%12 for x in self._pitch_classes]
+        except AttributeError as err:
+            raise TypeError('{0} '
+                            'Did you try to instantiate the abstract class PitchSet directly, '
+                            'or forget to set _pitch_classes in an inherited class?'.format(err.args[0]))
+
+    @pitch_classes.setter
+    def pitch_classes(self, value):
+        raise RuntimeError('"pitches" cannot be set')
+
+    @property
+    def range(self):
+        return self._range
+
+    @range.setter
+    def range(self, value):
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            raise TypeError('PitchSet.range value must be a list or tuple of length 2')
+
+        myrange = []
+        for v in value:
+            if isinstance(v, int):
+                myrange.append(v)
+            elif isinstance(v, str):
+                myrange.append(Pitch.note_name_to_midi(v))
+            else:
+                raise TypeError('The value for PitchSet.range must be a list or tuple of integers or valid note names as strings')
+
+        if myrange[1] >= myrange[0]:
+            self._range = tuple(myrange)
+        else:
+            self._range = tuple(myrange[::-1])
+
+    @property
+    def pitches(self):
+        return [Pitch(p) for p in range(self.range[0], self.range[1]+1) if p%12 in self.pitch_classes]
+
+    def __init__(self, tonic=0, range=None):
+        if isinstance(tonic, str):
+            tonic = Pitch.note_name_to_midi(tonic)
+        elif not isinstance(tonic, int):
+            raise TypeError('tonic must be an instance of str or int')
+
+        self.tonic = tonic % 12
+        if range is None:
+            self.range = (0, 11)
+        else:
+            self.range = range
+
+    def __len__(self):
+        l = 0
+        for p in range(self.range[0], self.range[1]+1):
+            if p%12 in self.pitch_classes:
+                l += 1
+        return l
+
+    def __getitem__(self, item):
+        return self.pitches[item]
 
 
 class StartTime:
